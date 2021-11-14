@@ -205,7 +205,8 @@ namespace {
     else {
       Operation::Type opType;
       if (it != tokens.end() &&
-        (it->type == Token::Type::value || (it->type == Token::Type::operation && it->operName != "(")))
+        (it->type == Token::Type::value ||
+        (it->type == Token::Type::operation && it->operName == "(")))
         opType = Operation::Type::binary;
       else
         opType = Operation::Type::postfix;
