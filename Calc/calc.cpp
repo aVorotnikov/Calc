@@ -145,6 +145,119 @@ namespace {
       opStack.pop();
     }
   }
+
+  /// @brief Automata states enumeration
+  enum class State {
+    prefix,  ///< expect prefix
+    suffix,  ///< expect suffix
+    done,    ///< parsing done
+    end      ///< parsing end
+  };
+
+  /// @brief Prefix state execution
+  /// @param[in] numStack Stack with numbers
+  /// @param[in] opStack Stack with operations
+  /// @param[in] tok Current token
+  /// @param[in] operations Operations list
+  /// @return next state
+  State OnPrefix(std::stack<Token> &numStack, std::stack<Token> &opStack, Token &tok, std::list<Operation> &operations) {
+    if (tok.type == Token::Type::value) {
+      numStack.push(tok);
+      return State::suffix;
+    }
+    if (tok.operName != "(") {
+      auto opIter = std::find_if(operations.begin(),
+        operations.end(),
+        [&tok](Operation const &op) {
+            if (op.type == Operation::Type::infix && op.token == tok.operName)
+              return true;
+            return false;
+          });
+      if (opIter == operations.end())
+        throw std::exception((std::string("Unknown infix operation ") + tok.operName).c_str());
+      tok.oper = &*opIter;
+    }
+    opStack.push(tok);
+    return State::prefix;
+  }
+
+  /// @brief Suffix state execution
+  /// @param[in] numStack Stack with numbers
+  /// @param[in] opStack Stack with operations
+  /// @param[in] tok Current token
+  /// @param[in] operations Operations list
+  /// @param[in] tokens Token list
+  /// @param[in] it iterator to next token
+  /// @return next state
+  State OnSuffix(std::stack<Token> &numStack, std::stack<Token> &opStack,
+    Token &tok, std::list<Operation> &operations,
+    std::list<Token> const& tokens, std::list<Token>::const_iterator const &it) {
+    if (tok.type == Token::Type::value || tok.operName == "(")
+      throw std::exception("Expect operation");
+
+    if (tok.operName == ")") {
+      DropOpers(numStack, opStack, tok);
+      if (!opStack.empty() && opStack.top().operName == "(")
+        opStack.pop();
+      else
+        throw std::exception("Missing '('");
+    }
+    else {
+      Operation::Type opType;
+      if (it != tokens.end() &&
+        (it->type == Token::Type::value || (it->type == Token::Type::operation && it->operName != "(")))
+        opType = Operation::Type::binary;
+      else
+        opType = Operation::Type::postfix;
+      auto prediction = [&tok, &opType](Operation const &op) {
+        if (op.type == opType && op.token == tok.operName)
+          return true;
+        return false;
+      };
+      auto opIter = std::find_if(operations.begin(), operations.end(), prediction);
+      if (opIter == operations.end() && opType == Operation::Type::postfix) {
+        opType = Operation::Type::binary;
+        opIter = std::find_if(operations.begin(), operations.end(), prediction);
+      }
+      if (opIter == operations.end())
+        throw std::exception((std::string("Unknown operation ") + tok.operName).c_str());
+      tok.oper = &*opIter;
+      DropOpers(numStack, opStack, tok);
+      opStack.push(tok);
+      if (opType == Operation::Type::binary)
+        return State::prefix;
+    }
+    return State::suffix;
+  }
+
+  /// @brief Done state execution
+  /// @param[in] numStack Stack with numbers
+  /// @param[in] opStack Stack with operations
+  /// @param[in] tok Current token
+  /// @param[in] operations Operations list
+  /// @param[in] tokens Token list
+  /// @param[in] it iterator to next token
+  /// @return next state
+  State OnDone(std::stack<Token> &numStack, std::stack<Token> &opStack,
+    Token &tok, std::list<Operation> &operations,
+    std::queue<Token> &res) {
+    Token closeBracket;
+    closeBracket.type = Token::Type::operation;
+    closeBracket.oper = nullptr;
+    closeBracket.operName = ")";
+    DropOpers(numStack, opStack, closeBracket);
+    if (numStack.empty())
+      throw std::exception("Missing ')'");
+    while (!numStack.empty()) {
+      opStack.push(numStack.top());
+      numStack.pop();
+    }
+    while (!opStack.empty()) {
+      res.push(opStack.top());
+      opStack.pop();
+    }
+    return State::end;
+  }
 }
 
 /// @brief Create token queue in reverse polish notation
@@ -154,12 +267,6 @@ std::queue<Token> Calculator::Parse(std::list<Token> const &tokens) {
   std::queue<Token> res;
   std::stack<Token> numStack, opStack;
 
-  enum class State {
-    prefix,
-    suffix,
-    done,
-    end
-  };
   State state = State::prefix;
   Token tok;
   auto it = tokens.begin();
@@ -178,80 +285,13 @@ std::queue<Token> Calculator::Parse(std::list<Token> const &tokens) {
 
     switch (state) {
       case State::prefix:
-        if (tok.type == Token::Type::value) {
-          numStack.push(tok);
-          state = State::suffix;
-        }
-        else {
-          if (tok.operName != "(") {
-            auto opIter = std::find_if(operations.begin(),
-              operations.end(),
-              [&tok](Operation const &op) {
-                if (op.type == Operation::Type::infix && op.token == tok.operName)
-                  return true;
-                return false;
-              });
-            if (opIter == operations.end())
-              throw std::exception((std::string("Unknown infix operation ") + tok.operName).c_str());
-            tok.oper = &*opIter;
-          }
-          opStack.push(tok);
-        }
+        state = OnPrefix(numStack, opStack, tok, operations);
         break;
       case State::suffix:
-        if (tok.type == Token::Type::value || tok.operName == "(")
-          throw std::exception("Expect operation");
-
-        if (tok.operName == ")") {
-          DropOpers(numStack, opStack, tok);
-          if (!opStack.empty() && opStack.top().operName == "(")
-            opStack.pop();
-          else
-            throw std::exception("Missing '('");
-        }
-        else {
-          Operation::Type opType;
-          if (it != tokens.end() &&
-            (it->type == Token::Type::value || (it->type == Token::Type::operation && it->operName != "(")))
-            opType = Operation::Type::binary;
-          else
-            opType = Operation::Type::postfix;
-          auto prediction = [&tok, &opType](Operation const &op) {
-            if (op.type == opType && op.token == tok.operName)
-              return true;
-            return false;
-          };
-          auto opIter = std::find_if(operations.begin(), operations.end(), prediction);
-          if (opIter == operations.end() && opType == Operation::Type::postfix) {
-            opType = Operation::Type::binary;
-            opIter = std::find_if(operations.begin(), operations.end(), prediction);
-          }
-          if (opIter == operations.end())
-            throw std::exception((std::string("Unknown operation ") + tok.operName).c_str());
-          tok.oper = &*opIter;
-          DropOpers(numStack, opStack, tok);
-          opStack.push(tok);
-          if (opType == Operation::Type::binary)
-            state = State::prefix;
-        }
+        state = OnSuffix(numStack, opStack, tok, operations, tokens, it);
         break;
       case State::done: {
-        Token closeBracket;
-        closeBracket.type = Token::Type::operation;
-        closeBracket.oper = nullptr;
-        closeBracket.operName = ")";
-        DropOpers(numStack, opStack, closeBracket);
-        if (numStack.empty())
-          throw std::exception("Missing ')'");
-        while (!numStack.empty()) {
-          opStack.push(numStack.top());
-          numStack.pop();
-        }
-        while (!opStack.empty()) {
-          res.push(opStack.top());
-          opStack.pop();
-        }
-        state = State::end;
+        state = OnDone(numStack, opStack, tok, operations, res);
         break;
       }
     }
