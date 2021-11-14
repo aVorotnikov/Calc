@@ -36,11 +36,15 @@ Calculator::Calculator(std::string const &path) : operations(defaultOperations) 
     if (hDll == NULL)
       continue;
     GetOperationsFromDLL *func = (GetOperationsFromDLL *)GetProcAddress(hDll, "GetOperations");
-    if (func == (GetOperationsFromDLL *)NULL)
+    if (func == (GetOperationsFromDLL *)NULL) {
+      FreeLibrary(hDll);
       continue;
+    }
     auto opers = func();
-    if (opers == (std::list<Operation>*)NULL)
+    if (opers == (std::list<Operation>*)NULL) {
+      FreeLibrary(hDll);
       continue;
+    }
     operations.insert(operations.end(), opers->begin(), opers->end());
     delete opers;
     dlls.push_back(hDll);
