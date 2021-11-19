@@ -7,6 +7,7 @@
 #include <exception>
 #include <stack>
 #include <filesystem>
+#include <algorithm>
 #include "calc.h"
 
 /// @brief Default calculator operations
@@ -30,22 +31,29 @@ namespace {
 
 /// @brief Constructor
 /// @param[in] path path to load dynamic libraries with operations
-Calculator::Calculator(std::string const &path) : operations(defaultOperations) {
+Calculator::Calculator(std::string const &path) {
+  std::for_each(defaultOperations.begin(), defaultOperations.end(),
+    [this](Operation const &op) {
+      operations.push_back(std::make_shared<Operation>(op));
+    });
   for (auto &p : std::filesystem::directory_iterator(path)) {
     HMODULE hDll = LoadLibrary(p.path().string().c_str());
     if (hDll == NULL)
       continue;
     GetOperationsFromDLL *func = (GetOperationsFromDLL *)GetProcAddress(hDll, "GetOperations");
-    if (func == (GetOperationsFromDLL *)NULL) {
+    if (func == static_cast<GetOperationsFromDLL *>(NULL)) {
       FreeLibrary(hDll);
       continue;
     }
     auto opers = func();
-    if (opers == (std::list<Operation>*)NULL) {
+    if (!opers) {
       FreeLibrary(hDll);
       continue;
     }
-    operations.insert(operations.end(), opers->begin(), opers->end());
+    std::for_each(opers->begin(), opers->end(),
+      [this](Operation const &op) {
+        operations.push_back(std::make_shared<Operation>(op));
+      });
     delete opers;
     dlls.push_back(hDll);
   }
@@ -160,7 +168,8 @@ namespace {
   /// @param[in] tok Current token
   /// @param[in] operations Operations list
   /// @return next state
-  State OnPrefix(std::stack<Token> &numStack, std::stack<Token> &opStack, Token &tok, std::list<Operation> &operations) {
+  State OnPrefix(std::stack<Token> &numStack, std::stack<Token> &opStack, Token &tok,
+    std::list<std::shared_ptr<Operation>> &operations) {
     if (tok.type == Token::Type::value) {
       numStack.push(tok);
       return State::suffix;
@@ -168,14 +177,14 @@ namespace {
     if (tok.operName != "(") {
       auto opIter = std::find_if(operations.begin(),
         operations.end(),
-        [&tok](Operation const &op) {
-            if (op.type == Operation::Type::infix && op.token == tok.operName)
+        [&tok](std::shared_ptr<Operation> op) {
+            if (op->type == Operation::Type::infix && op->token == tok.operName)
               return true;
             return false;
           });
       if (opIter == operations.end())
         throw std::exception((std::string("Unknown infix operation ") + tok.operName).c_str());
-      tok.oper = &*opIter;
+      tok.oper = *opIter;
     }
     opStack.push(tok);
     return State::prefix;
@@ -190,7 +199,7 @@ namespace {
   /// @param[in] it iterator to next token
   /// @return next state
   State OnSuffix(std::stack<Token> &numStack, std::stack<Token> &opStack,
-    Token &tok, std::list<Operation> &operations,
+    Token &tok, std::list<std::shared_ptr<Operation>> &operations,
     std::list<Token> const& tokens, std::list<Token>::const_iterator const &it) {
     if (tok.type == Token::Type::value || tok.operName == "(")
       throw std::exception("Expect operation");
@@ -210,8 +219,8 @@ namespace {
         opType = Operation::Type::binary;
       else
         opType = Operation::Type::postfix;
-      auto prediction = [&tok, &opType](Operation const &op) {
-        if (op.type == opType && op.token == tok.operName)
+      auto prediction = [&tok, &opType](std::shared_ptr<Operation> op) {
+        if (op->type == opType && op->token == tok.operName)
           return true;
         return false;
       };
@@ -222,7 +231,7 @@ namespace {
       }
       if (opIter == operations.end())
         throw std::exception((std::string("Unknown operation ") + tok.operName).c_str());
-      tok.oper = &*opIter;
+      tok.oper = *opIter;
       DropOpers(numStack, opStack, tok);
       opStack.push(tok);
       if (opType == Operation::Type::binary)
@@ -240,7 +249,7 @@ namespace {
   /// @param[in] it iterator to next token
   /// @return next state
   State OnDone(std::stack<Token> &numStack, std::stack<Token> &opStack,
-    Token &tok, std::list<Operation> &operations,
+    Token &tok, std::list<std::shared_ptr<Operation>> &operations,
     std::queue<Token> &res) {
     Token closeBracket;
     closeBracket.type = Token::Type::operation;

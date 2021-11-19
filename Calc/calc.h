@@ -22,7 +22,7 @@
 class Calculator {
 private:
   static const std::list<Operation> defaultOperations;  ///< Default calculator operations
-  std::list<Operation> operations;                      ///< Supported operations
+  std::list<std::shared_ptr<Operation>> operations;     ///< Supported operations
   std::list<HMODULE> dlls;                              ///< List of loaded dynamic libraries
 
   /// @brief Create token list from string

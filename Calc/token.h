@@ -18,10 +18,10 @@ struct Token {
     operation,  ///< operation token
     value       ///< number token
   };
-  Type type;             ///< Type
-  double num;            ///< Number
-  std::string operName;  ///< Operation name
-  Operation *oper;       ///< Pointer to operation struct
+  Type type;                        ///< Type
+  double num;                       ///< Number
+  std::string operName;             ///< Operation name
+  std::shared_ptr<Operation> oper;  ///< Pointer to operation struct
 };
 
 #endif // !__TOKEN_H_INCLUDED
